@@ -1,15 +1,21 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
+import csv
+import json
 
 from beam_analysis import (
     BeamInput,
     PointLoad,
     UniformLoad,
+    beam_from_dict,
+    beam_to_dict,
     get_sections,
     get_section,
     analyze,
 )
 from beam_view import BeamView
+from beam_export import write_results_csv
+from beam_report import write_calculation_pdf
 
 
 class BeamDesignerApp:
@@ -19,6 +25,7 @@ class BeamDesignerApp:
         self.root.geometry("1280x820")
         self.root.minsize(980, 680)
         self.root.configure(bg="#F4F7F9")
+        self._build_menu()
 
         self.point_loads = []
         self.uniform_loads = [UniformLoad(1.0, 0.0, 20.0)]
@@ -42,14 +49,16 @@ class BeamDesignerApp:
 
         self.right = ttk.Frame(outer)
         self.right.grid(row=0, column=1, sticky="nsew")
-        self.right.rowconfigure(0, weight=1)
-        self.right.rowconfigure(1, weight=0)
+        self.right.rowconfigure(0, weight=0)
+        self.right.rowconfigure(1, weight=1)
+        self.right.rowconfigure(2, weight=0)
         self.right.columnconfigure(0, weight=1)
 
         self._build_inputs()
+        self._build_export_toolbar()
         self.view = BeamView(self.right, on_point_drag=self._drag_point_load)
         self.view.canvas.get_tk_widget().grid(
-            row=0, column=0, sticky="nsew"
+            row=1, column=0, sticky="nsew"
         )
         self._build_check_cards()
 
@@ -60,6 +69,34 @@ class BeamDesignerApp:
         self.span_var.trace_add("write", lambda *_: self._span_text_changed())
 
         self.schedule_recalculate()
+
+    def _build_menu(self):
+        menu_bar = tk.Menu(self.root)
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(label="Open", command=self._open_beam)
+        file_menu.add_command(label="Save", command=self._save_beam)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+        self.root.configure(menu=menu_bar)
+
+    def _build_export_toolbar(self):
+        toolbar = ttk.Frame(self.right)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(
+            toolbar, text="Export",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        self.csv_export_button = ttk.Button(
+            toolbar,
+            text="Export results to CSV",
+            command=self._export_results_csv,
+        )
+        self.csv_export_button.pack(side="left", padx=(0, 6))
+        self.pdf_export_button = ttk.Button(
+            toolbar,
+            text="Save calculation sheet (PDF)",
+            command=self._save_calculation_pdf,
+        )
+        self.pdf_export_button.pack(side="left")
 
     def _build_inputs(self):
         title = ttk.Label(
@@ -145,7 +182,7 @@ class BeamDesignerApp:
 
     def _build_check_cards(self):
         cards = ttk.Frame(self.right)
-        cards.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        cards.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         cards.columnconfigure(0, weight=1)
         cards.columnconfigure(1, weight=1)
         cards.columnconfigure(2, weight=1)
@@ -350,6 +387,107 @@ class BeamDesignerApp:
             return span, tuple(point_loads), tuple(uniform_loads)
         except ValueError as error:
             raise ValueError(str(error)) from error
+
+    def _current_beam(self):
+        span, point_loads, uniform_loads = self._read_load_values()
+        return BeamInput(
+            support_type=self.support_var.get(),
+            span_ft=span,
+            point_loads=point_loads,
+            uniform_loads=uniform_loads,
+            section_name=self.section_var.get(),
+            deflection_divisor=240 if self.limit_var.get() == "L/240" else 360,
+        )
+
+    def _save_beam(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Save beam",
+            defaultextension=".beam",
+            filetypes=(("Beam Designer files", "*.beam"), ("JSON files", "*.json")),
+        )
+        if not path:
+            return
+        try:
+            beam = self._current_beam()
+            with open(path, "w", encoding="utf-8") as beam_file:
+                json.dump(beam_to_dict(beam), beam_file, indent=2, allow_nan=False)
+                beam_file.write("\n")
+        except (OSError, ValueError, TypeError) as error:
+            messagebox.showerror("Could not save beam", str(error), parent=self.root)
+
+    def _open_beam(self):
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Open beam",
+            filetypes=(("Beam Designer files", "*.beam"), ("JSON files", "*.json")),
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as beam_file:
+                beam = beam_from_dict(json.load(beam_file))
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as error:
+            messagebox.showerror("Could not open beam", str(error), parent=self.root)
+            return
+
+        self.support_var.set(beam.support_type)
+        self.span_var.set(str(beam.span_ft))
+        self.span_slider.set(beam.span_ft)
+        self.material_var.set(get_section(beam.section_name).material)
+        self._refresh_sections()
+        self.section_var.set(beam.section_name)
+        self.limit_var.set(f"L/{beam.deflection_divisor}")
+        self.point_loads = list(beam.point_loads)
+        self.uniform_loads = list(beam.uniform_loads)
+        self._refresh_load_rows()
+        self.schedule_recalculate()
+
+    def _export_results_csv(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export beam results",
+            defaultextension=".csv",
+            filetypes=(("CSV files", "*.csv"),),
+        )
+        if not path:
+            return
+        try:
+            result = analyze(self._current_beam())
+            with open(path, "w", newline="", encoding="utf-8-sig") as csv_file:
+                write_results_csv(csv_file, result)
+            messagebox.showinfo(
+                "Results exported", f"CSV saved to:\n{path}", parent=self.root
+            )
+        except (OSError, ValueError, TypeError, csv.Error) as error:
+            messagebox.showerror(
+                "Could not export results", str(error), parent=self.root
+            )
+
+    def _save_calculation_pdf(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Save calculation sheet",
+            defaultextension=".pdf",
+            filetypes=(("PDF files", "*.pdf"),),
+        )
+        if not path:
+            return
+        try:
+            beam = self._current_beam()
+            result = analyze(beam)
+            write_calculation_pdf(path, beam, result)
+            messagebox.showinfo(
+                "Calculation sheet saved",
+                f"PDF saved to:\n{path}",
+                parent=self.root,
+            )
+        except (OSError, ValueError, TypeError, RuntimeError) as error:
+            messagebox.showerror(
+                "Could not save calculation sheet",
+                str(error),
+                parent=self.root,
+            )
 
     def schedule_recalculate(self):
         if self.recalc_after_id is not None:

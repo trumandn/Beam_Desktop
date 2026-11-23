@@ -1,3 +1,7 @@
+import csv
+import io
+import os
+import tempfile
 import unittest
 
 from beam_analysis import (
@@ -5,7 +9,11 @@ from beam_analysis import (
     PointLoad,
     UniformLoad,
     analyze,
+    beam_from_dict,
+    beam_to_dict,
 )
+from beam_export import write_results_csv
+from beam_report import write_calculation_pdf
 
 
 class BeamAnalysisTests(unittest.TestCase):
@@ -91,6 +99,70 @@ class BeamAnalysisTests(unittest.TestCase):
         self.assertEqual(result.right_reaction_kips, 0)
         self.assertEqual(result.max_moment_kip_ft, 0)
         self.assertEqual(result.max_deflection_in, 0)
+
+    def test_beam_file_round_trip(self):
+        beam = BeamInput(
+            support_type="Cantilever",
+            span_ft=12.5,
+            point_loads=(PointLoad(3.25, 12.5),),
+            uniform_loads=(UniformLoad(0.75, 1.0, 9.5),),
+            section_name="2x10",
+            deflection_divisor=240,
+        )
+        self.assertEqual(beam_from_dict(beam_to_dict(beam)), beam)
+
+    def test_beam_file_rejects_out_of_span_point_load(self):
+        data = {
+            "format_version": 1,
+            "support_type": "Simply supported",
+            "span_ft": 10,
+            "section_name": "W12x26",
+            "deflection_divisor": 360,
+            "point_loads": [{"magnitude_kips": 1, "position_ft": 11}],
+            "uniform_loads": [],
+        }
+        with self.assertRaisesRegex(ValueError, "within the span"):
+            beam_from_dict(data)
+
+    def test_csv_export_contains_sampled_results_and_units(self):
+        result = analyze(BeamInput(
+            support_type="Simply supported",
+            span_ft=4,
+            point_loads=(PointLoad(2, 1.1),),
+            uniform_loads=(),
+            section_name="W12x26",
+        ))
+        output = io.StringIO(newline="")
+        write_results_csv(output, result)
+        rows = list(csv.reader(io.StringIO(output.getvalue())))
+        self.assertEqual(
+            rows[0],
+            [
+                "Position x (ft)",
+                "Shear V (kips)",
+                "Moment M (kip-ft)",
+                "Deflection (in)",
+            ],
+        )
+        self.assertEqual(len(rows), len(result.x_ft) + 1)
+        positions = [float(row[0]) for row in rows[1:]]
+        self.assertIn(1.1, positions)
+
+    def test_calculation_sheet_pdf_is_generated(self):
+        beam = BeamInput(
+            support_type="Simply supported",
+            span_ft=8,
+            point_loads=(PointLoad(2, 3),),
+            uniform_loads=(),
+            section_name="W12x26",
+        )
+        result = analyze(beam)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "calculation-sheet.pdf")
+            write_calculation_pdf(path, beam, result)
+            with open(path, "rb") as pdf_file:
+                self.assertEqual(pdf_file.read(4), b"%PDF")
+            self.assertGreater(os.path.getsize(path), 1000)
 
 
 if __name__ == "__main__":

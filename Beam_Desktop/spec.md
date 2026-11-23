@@ -107,6 +107,13 @@ sizing a floor beam or deck joist.
 ## Outputs
 - A beam drawing with the supports, load arrows (point loads as single
   arrows, uniform loads as a row of small arrows), and the reactions.
+- A File menu with Save and Open. Saved files include support type, span,
+  section, deflection limit, point loads, and uniform loads.
+- An Export results to CSV button that writes the sampled position, shear,
+  moment, and deflection values with units in the column headers.
+- A Save calculation sheet button that creates a PDF with the beam inputs,
+  reactions, bending and deflection checks, and the beam/shear/moment/
+  deflection diagrams.
 - Three diagrams stacked under the beam and lined up with it on the same
   x scale: shear (kips), moment (kip-ft), and deflected shape (in). Each
   diagram is filled and shows its maximum value labeled at its location.
@@ -147,4 +154,3 @@ sizing a floor beam or deck joist.
 ## Out of scope
 - Self-weight, shear stress, lateral-torsional buckling, load
   combinations, and continuous beams.
-- Saving designs.

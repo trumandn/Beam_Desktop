@@ -1,17 +1,21 @@
 # Beam Designer
 
-Python Tkinter desktop application for simply supported and cantilever beam
-analysis.
+Tkinter desktop app for analyzing simply supported and cantilever beams
+with point and uniform loads. It displays beam diagrams and bending/
+deflection checks, and can save designs, CSV results, and PDF reports.
 
-## Run
+## Install
+
+Install Python with Tkinter, then install NumPy and Matplotlib:
 
 ```powershell
-pip install -r requirements.txt
-python app.py
+pip install numpy matplotlib
 ```
 
-## Test
+## Start
+
+From the `Beam_Desktop` folder, run:
 
 ```powershell
-python -m unittest discover -s tests -p "test_*.py"
+python app.py
 ```

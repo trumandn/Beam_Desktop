@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Iterable, Optional
 
 import numpy as np
@@ -88,6 +89,88 @@ def get_section(name: str) -> Section:
         if section.name == name:
             return section
     raise ValueError("Unknown section: " + name)
+
+
+def beam_to_dict(beam: BeamInput) -> dict:
+    return {
+        "format_version": 1,
+        "support_type": beam.support_type,
+        "span_ft": beam.span_ft,
+        "section_name": beam.section_name,
+        "deflection_divisor": beam.deflection_divisor,
+        "point_loads": [
+            {
+                "magnitude_kips": load.magnitude_kips,
+                "position_ft": load.position_ft,
+            }
+            for load in beam.point_loads
+        ],
+        "uniform_loads": [
+            {
+                "magnitude_kips_per_ft": load.magnitude_kips_per_ft,
+                "start_ft": load.start_ft,
+                "end_ft": load.end_ft,
+            }
+            for load in beam.uniform_loads
+        ],
+    }
+
+
+def beam_from_dict(data: dict) -> BeamInput:
+    if not isinstance(data, dict) or data.get("format_version") != 1:
+        raise ValueError("Unsupported or invalid beam file format.")
+
+    try:
+        support_type = data["support_type"]
+        span_ft = float(data["span_ft"])
+        section_name = data["section_name"]
+        deflection_divisor = int(data["deflection_divisor"])
+        raw_point_loads = data["point_loads"]
+        raw_uniform_loads = data["uniform_loads"]
+
+        if support_type not in ("Simply supported", "Cantilever"):
+            raise ValueError("Invalid support type in beam file.")
+        if not math.isfinite(span_ft) or not 4 <= span_ft <= 40:
+            raise ValueError("Beam-file span must be between 4 and 40 ft.")
+        if deflection_divisor not in (240, 360):
+            raise ValueError("Invalid deflection limit in beam file.")
+        get_section(section_name)
+        if not isinstance(raw_point_loads, list):
+            raise ValueError("Point loads in beam file must be a list.")
+        if not isinstance(raw_uniform_loads, list):
+            raise ValueError("Uniform loads in beam file must be a list.")
+
+        point_loads = []
+        for item in raw_point_loads:
+            magnitude = float(item["magnitude_kips"])
+            position = float(item["position_ft"])
+            if not math.isfinite(magnitude) or not math.isfinite(position):
+                raise ValueError("Point loads must contain finite values.")
+            if not 0 <= position <= span_ft:
+                raise ValueError("Point-load positions must be within the span.")
+            point_loads.append(PointLoad(magnitude, position))
+
+        uniform_loads = []
+        for item in raw_uniform_loads:
+            magnitude = float(item["magnitude_kips_per_ft"])
+            start = float(item["start_ft"])
+            end = float(item["end_ft"])
+            if not all(math.isfinite(value) for value in (magnitude, start, end)):
+                raise ValueError("Uniform loads must contain finite values.")
+            if end < start:
+                raise ValueError("Uniform-load start must not exceed its end.")
+            uniform_loads.append(UniformLoad(magnitude, start, end))
+
+        return BeamInput(
+            support_type=support_type,
+            span_ft=span_ft,
+            point_loads=tuple(point_loads),
+            uniform_loads=tuple(uniform_loads),
+            section_name=section_name,
+            deflection_divisor=deflection_divisor,
+        )
+    except (KeyError, TypeError, OverflowError) as error:
+        raise ValueError("Beam file is missing required or valid fields.") from error
 
 
 def _clip_uniform_loads(
